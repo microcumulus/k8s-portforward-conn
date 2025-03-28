@@ -16,7 +16,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.21' # Adjust if your project uses a different Go version
+        go-version: '1.24' # Adjust if your project uses a different Go version
         cache: false # Optional: disable cache if experiencing issues
 
     - name: Check formatting and vet
