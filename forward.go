@@ -8,9 +8,24 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/transport/spdy"
 )
+
+// Forward maintains the previous func for backward compatibility.
+func Forward(ctx context.Context, rc *rest.Config, pod corev1.Pod, port string) (*FwdConn, error) {
+	fwd, err := NewForwarder(rc)
+	if err != nil {
+		return nil, fmt.Errorf("error creating forwarder: %w", err)
+	}
+
+	conn, err := fwd.Forward(ctx, pod, port)
+	if err != nil {
+		return nil, fmt.Errorf("error forwarding: %w", err)
+	}
+	return conn, nil
+}
 
 // Forward establishes a port forwarding connection to the specified pod on the given port.
 // It returns a net.Conn representing the connection to the pod, or an error if the connection could not be established.
