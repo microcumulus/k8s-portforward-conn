@@ -15,6 +15,26 @@ import (
 	"k8s.io/client-go/transport/spdy"
 )
 
+// Forward establishes a port forwarding connection to a specified pod in a Kubernetes cluster.
+// It takes a Kubernetes REST configuration, a pod object, and a port number as input.
+// The function returns a net.Conn representing the established connection, or an error if the connection fails to be established.
+//
+// Parameters:
+//   - ctx: A context.Context for managing the lifecycle of the port forwarding operation.
+//   - rc: A *rest.Config object containing the Kubernetes cluster configuration.
+//   - pod: A corev1.Pod object representing the pod to forward ports to.
+//   - port: A string representing the port number to forward (e.g., "8080").
+//
+// Usage:
+//
+//	conn, err := Forward(ctx, restConfig, myPod, "8080")
+//	if err != nil {
+//		log.Fatalf("Error forwarding port: %v", err)
+//		return
+//	}
+//	defer conn.Close()
+//
+// The returned net.Conn can then be used to send and receive data to the specified port on the pod.
 func Forward(ctx context.Context, rc *rest.Config, pod corev1.Pod, port string) (net.Conn, error) {
 	ctx, sp := otel.Tracer("vault.go").Start(ctx, "portForward")
 	defer sp.End()
