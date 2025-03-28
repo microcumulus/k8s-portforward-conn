@@ -12,7 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/httpstream"
 )
 
-const networkName = "portForward"
+const networkName = "port-forward"
 
 type fwdAddr string
 
@@ -38,17 +38,19 @@ func (f *fwdConn) watchErr(ctx context.Context) {
 	if err != nil {
 		select {
 		case <-ctx.Done():
-		case f.errch <- fmt.Errorf("error during read: %w", err):
+		case f.errch <- fmt.Errorf("error while reading error stream: %w", err):
 		}
 	}
 	if len(bs) > 0 {
 		select {
 		case <-ctx.Done():
-		case f.errch <- fmt.Errorf("error during read: %s", string(bs)):
+		case f.errch <- fmt.Errorf("error returned from apiserver: %s", string(bs)):
 		}
 	}
 }
 
+// Read first checks if there is an error on the error stream. If there is, it
+// returns it. Otherwise, it reads from the data stream.
 func (f *fwdConn) Read(b []byte) (n int, err error) {
 	select {
 	case err := <-f.errch:
@@ -58,6 +60,8 @@ func (f *fwdConn) Read(b []byte) (n int, err error) {
 	return f.data.Read(b)
 }
 
+// Write first checks if there is an error on the error stream. If there is, it
+// returns it. Otherwise, it writes to the data stream.
 func (f *fwdConn) Write(b []byte) (n int, err error) {
 	select {
 	case err := <-f.errch:
@@ -67,6 +71,8 @@ func (f *fwdConn) Write(b []byte) (n int, err error) {
 	return f.data.Write(b)
 }
 
+// Close closes the connection, removing the streams and closing the forwarder.
+// It returns an error if any of the operations fail.
 func (f *fwdConn) Close() error {
 	var errs []error
 	select {
