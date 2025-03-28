@@ -3,6 +3,7 @@ package k8sport
 import (
 	"fmt"
 	"net/http"
+	"sync"
 	"sync/atomic"
 
 	"k8s.io/client-go/kubernetes"
@@ -16,6 +17,7 @@ var (
 
 type Forwarder struct {
 	kc        rest.Interface
+	m         sync.Mutex
 	transport http.RoundTripper
 	upgrader  spdy.Upgrader
 

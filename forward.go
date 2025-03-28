@@ -37,8 +37,10 @@ func (fw *Forwarder) Forward(ctx context.Context, pod corev1.Pod, port string) (
 		Namespace(pod.Namespace).
 		SubResource("portforward")
 
+	fw.m.Lock()
 	dialer := spdy.NewDialer(fw.upgrader, &http.Client{Transport: fw.transport}, "POST", req.URL())
 	conn, _, err := dialer.Dial(portforward.PortForwardProtocolV1Name)
+	fw.m.Unlock()
 	if err != nil {
 		return nil, fmt.Errorf("error dialing for stream: %w", err)
 	}
