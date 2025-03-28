@@ -62,4 +62,4 @@ func main() {
   res, err := cli.Get("http://doesnnt.matter.com.only.path.gets.used/foo")
   // etc
 }
-
+```
