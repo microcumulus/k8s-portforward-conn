@@ -15,6 +15,7 @@ jobs:
 
     - name: Set up Go
       uses: actions/setup-go@v5
+      cache: 'false' # Disable caching for this step
       with:
         go-version: '1.24' # Adjust if your project uses a different Go version
 
@@ -31,6 +32,7 @@ jobs:
         echo "Code is formatted correctly."
 
     - name: Install and run golangci-lint
+      cache: 'false' # Disable caching for this step
       run: |
         go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
         $(go env GOPATH)/bin/golangci-lint run
@@ -49,7 +51,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.21' # Adjust if your project uses a different Go version
+        go-version: '1.24' # Adjust if your project uses a different Go version
 
     - name: Set up KinD Cluster
       id: kind # Added an ID for consistency if needed later
