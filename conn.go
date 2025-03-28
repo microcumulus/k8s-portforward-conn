@@ -24,7 +24,9 @@ func (f fwdAddr) String() string {
 	return string(f)
 }
 
-type fwdConn struct {
+// FwdConn implements net.Conn, but it also adds some convenience methods for
+// common operations like http.Client.
+type FwdConn struct {
 	fwd       httpstream.Connection
 	data, err httpstream.Stream
 	errch     chan error
@@ -32,7 +34,7 @@ type fwdConn struct {
 	pod       v1.Pod
 }
 
-func (f *fwdConn) watchErr(ctx context.Context) {
+func (f *FwdConn) watchErr(ctx context.Context) {
 	// This should only return if an err comes back
 	bs, err := io.ReadAll(f.err)
 	if err != nil {
@@ -51,7 +53,7 @@ func (f *fwdConn) watchErr(ctx context.Context) {
 
 // Read first checks if there is an error on the error stream. If there is, it
 // returns it. Otherwise, it reads from the data stream.
-func (f *fwdConn) Read(b []byte) (n int, err error) {
+func (f *FwdConn) Read(b []byte) (n int, err error) {
 	select {
 	case err := <-f.errch:
 		return 0, err
@@ -62,7 +64,7 @@ func (f *fwdConn) Read(b []byte) (n int, err error) {
 
 // Write first checks if there is an error on the error stream. If there is, it
 // returns it. Otherwise, it writes to the data stream.
-func (f *fwdConn) Write(b []byte) (n int, err error) {
+func (f *FwdConn) Write(b []byte) (n int, err error) {
 	select {
 	case err := <-f.errch:
 		return 0, err
@@ -73,7 +75,7 @@ func (f *fwdConn) Write(b []byte) (n int, err error) {
 
 // Close closes the connection, removing the streams and closing the forwarder.
 // It returns an error if any of the operations fail.
-func (f *fwdConn) Close() error {
+func (f *FwdConn) Close() error {
 	var errs []error
 	select {
 	case err := <-f.errch:
@@ -95,25 +97,25 @@ func (f *fwdConn) Close() error {
 }
 
 // LocalAddr returns the local network address, if known.
-func (f *fwdConn) LocalAddr() net.Addr {
+func (f *FwdConn) LocalAddr() net.Addr {
 	return fwdAddr(networkName + ":" + f.port)
 }
 
-func (f *fwdConn) RemoteAddr() net.Addr {
+func (f *FwdConn) RemoteAddr() net.Addr {
 	return fwdAddr(fmt.Sprintf("k8s/%s/%s:%s", f.pod.Namespace, f.pod.Name, f.port))
 }
 
-func (f *fwdConn) SetDeadline(t time.Time) error {
+func (f *FwdConn) SetDeadline(t time.Time) error {
 	f.fwd.SetIdleTimeout(time.Until(t))
 	return nil
 }
 
-func (f *fwdConn) SetReadDeadline(t time.Time) error {
+func (f *FwdConn) SetReadDeadline(t time.Time) error {
 	f.fwd.SetIdleTimeout(time.Until(t))
 	return nil
 }
 
-func (f *fwdConn) SetWriteDeadline(t time.Time) error {
+func (f *FwdConn) SetWriteDeadline(t time.Time) error {
 	f.fwd.SetIdleTimeout(time.Until(t))
 	return nil
 }
