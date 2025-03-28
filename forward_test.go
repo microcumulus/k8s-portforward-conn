@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -251,6 +252,156 @@ func TestPortForwardHttpbin(t *testing.T) {
 			t.Logf("Request %s successful and validated.", tc.path)
 		})
 	}
+}
+
+// TestPortForwardHttpbinConcurrent tests multiple concurrent forwards to the same pod.
+func TestPortForwardHttpbinConcurrent(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
+	defer cancel()
+
+	// --- Setup (Similar to TestPortForwardHttpbin) ---
+	// 1. Load Kubeconfig
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	configOverrides := &clientcmd.ConfigOverrides{}
+	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
+	config, err := kubeConfig.ClientConfig()
+	if err != nil {
+		t.Fatalf("Failed to load kubeconfig: %v", err)
+	}
+
+	// 2. Create Kubernetes Clientset
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		t.Fatalf("Failed to create clientset: %v", err)
+	}
+
+	// 3. Create Test Namespace
+	nsName := fmt.Sprintf("portforward-test-concurrent-%d", rand.Intn(100000))
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: nsName}}
+	_, err = clientset.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create namespace %s: %v", nsName, err)
+	}
+	t.Cleanup(func() {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = clientset.CoreV1().Namespaces().Delete(bgCtx, nsName, metav1.DeleteOptions{}) // Ignore cleanup error
+		t.Logf("Deleted namespace %s", nsName)
+	})
+	t.Logf("Created namespace %s", nsName)
+
+	// 4. Create httpbin Pod
+	podName := "httpbin-test-concurrent"
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      podName,
+			Namespace: nsName,
+			Labels:    map[string]string{"app": "httpbin-concurrent"},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:  "httpbin",
+					Image: "kennethreitz/httpbin",
+					Ports: []corev1.ContainerPort{{ContainerPort: 80, Protocol: corev1.ProtocolTCP}},
+				},
+			},
+		},
+	}
+	httpBinPod, err := clientset.CoreV1().Pods(nsName).Create(ctx, pod, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create pod %s/%s: %v", nsName, podName, err)
+	}
+	t.Logf("Created pod %s/%s", nsName, podName)
+
+	// 5. Wait for Pod Ready
+	t.Logf("Waiting for pod %s/%s to be ready...", nsName, podName)
+	if err := waitForPodReady(ctx, clientset, nsName, podName); err != nil {
+		t.Fatalf("Pod %s/%s did not become ready: %v", nsName, podName, err)
+	}
+
+	// 6. Create Forwarder instance
+	fw, err := NewForwarder(config)
+	if err != nil {
+		t.Fatalf("Failed to create Forwarder: %v", err)
+	}
+	// --- End Setup ---
+
+	targetPort := "80"
+	numConcurrent := 5                                           // Number of concurrent connections to test
+	targetURL := &url.URL{Scheme: "http", Host: "internal-host"} // Host doesn't matter much here
+
+	var wg sync.WaitGroup
+	wg.Add(numConcurrent)
+
+	t.Logf("Starting %d concurrent port forward attempts to %s/%s:%s", numConcurrent, nsName, podName, targetPort)
+
+	for i := range numConcurrent {
+		go func(instance int) {
+			defer wg.Done()
+			localCtx, cancel := context.WithTimeout(ctx, 30*time.Second) // Shorter timeout per connection attempt
+			defer cancel()
+
+			logPrefix := fmt.Sprintf("[Instance %d] ", instance)
+
+			// Forward the port for this instance
+			conn, err := fw.Forward(localCtx, *httpBinPod, targetPort)
+			if err != nil {
+				t.Errorf("%s Port forwarding failed: %v", logPrefix, err)
+				return
+			}
+			defer conn.Close()
+			t.Logf("%s Port forward connection established", logPrefix)
+
+			// Create an HTTP client using the forwarded connection
+			client := conn.HTTPClient()
+
+			// Make a request through the tunnel
+			reqURL := targetURL.JoinPath("/get") // Simple endpoint
+			req, err := http.NewRequestWithContext(localCtx, http.MethodGet, reqURL.String(), nil)
+			if err != nil {
+				t.Errorf("%s Failed to create request: %v", logPrefix, err)
+				return
+			}
+			req.Header.Set("X-Instance-ID", fmt.Sprintf("%d", instance)) // Add unique header per instance
+
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Errorf("%s HTTP request failed: %v", logPrefix, err)
+				return
+			}
+			defer resp.Body.Close()
+
+			// Basic validation: Check status code
+			if resp.StatusCode != http.StatusOK {
+				t.Errorf("%s Expected status code %d, got %d", logPrefix, http.StatusOK, resp.StatusCode)
+				return
+			}
+
+			// More robust validation: Check if response body reflects the unique header
+			var bodyJson map[string]any
+			if err := json.NewDecoder(resp.Body).Decode(&bodyJson); err != nil {
+				t.Errorf("%s Failed to decode JSON response body: %v", logPrefix, err)
+				return
+			}
+			headersMap, ok := bodyJson["headers"].(map[string]any)
+			if !ok {
+				t.Errorf("%s Missing 'headers' field in response body", logPrefix)
+				return
+			}
+			instanceHeader, ok := headersMap["X-Instance-Id"].(string)
+			if !ok || instanceHeader != fmt.Sprintf("%d", instance) {
+				t.Errorf("%s Expected 'X-Instance-Id' header '%d' in response body, got '%v'", logPrefix, instance, instanceHeader)
+				return
+			}
+
+			t.Logf("%s Request successful and validated.", logPrefix)
+		}(i)
+	}
+
+	// Wait for all goroutines to complete
+	wg.Wait()
+	t.Logf("All %d concurrent port forward tests completed.", numConcurrent)
 }
 
 // waitForPodReady polls the pod status until it is Running and Ready.
