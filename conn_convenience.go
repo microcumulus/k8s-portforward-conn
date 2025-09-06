@@ -13,6 +13,9 @@ func (f *FwdConn) HTTPTransport() *http.Transport {
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return f, nil
 		},
+		Dial: func(network, addr string) (net.Conn, error) {
+			return f, nil
+		},
 	}
 }
 
